@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: iqx-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: iqx_stocks
+      POSTGRES_USER: iqx_user
+      POSTGRES_PASSWORD: iqx_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - iqx-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iqx_user -d iqx_stocks"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # IQX API Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: iqx-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: iqx_stocks
+      DB_USER: iqx_user
+      DB_PASSWORD: iqx_password
+      SIMPLIZE_API_BASE_URL: http://simplize.vn/_next/data/TjP_LuGmDMvtClpM082yf
+      SIMPLIZE_REQUEST_DELAY: 1000
+      SIMPLIZE_MAX_RETRIES: 3
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX_REQUESTS: 100
+      LOG_LEVEL: info
+      LOG_FILE: logs/app.log
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - iqx-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: iqx-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - iqx-network
+    depends_on:
+      - api
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  iqx-network:
+    driver: bridge
